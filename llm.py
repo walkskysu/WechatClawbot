@@ -1,12 +1,16 @@
-"""LLM client — OpenAI-compatible chat completion."""
+"""LLM client — OpenAI-compatible chat completion with agentic tool loop."""
 
+import asyncio
 import configparser
 import json
 import os
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Awaitable, Callable
 from uuid import uuid4
 
+import httpx
 from openai import AsyncOpenAI
 
 _ROOT_DIR = Path(__file__).resolve().parent
@@ -18,6 +22,26 @@ _HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 _LATEST_CHAT_FILE = _HISTORY_DIR / "latest_chat.json"
 _SERVER_CONF_FILE = _ROOT_DIR / "server.conf"
 _DEFAULT_LATEST_CHAT_LIMIT = 20
+
+# --- Agent configuration (loaded once at startup) ---
+_AGENT_MD_FILE = _ROOT_DIR / "agent" / "agent.md"
+_TOOLS_MD_FILE = _ROOT_DIR / "agent" / "tools.md"
+_TOOLS_JSON_FILE = _ROOT_DIR / "agent" / "tools.json"
+
+_SYSTEM_CONTENT: str = "\n\n".join(
+    part
+    for part in [
+        _AGENT_MD_FILE.read_text(encoding="utf-8") if _AGENT_MD_FILE.exists() else "",
+        _TOOLS_MD_FILE.read_text(encoding="utf-8") if _TOOLS_MD_FILE.exists() else "",
+    ]
+    if part.strip()
+)
+
+_TOOLS: list = (
+    json.loads(_TOOLS_JSON_FILE.read_text(encoding="utf-8"))
+    if _TOOLS_JSON_FILE.exists()
+    else []
+)
 
 _client = AsyncOpenAI(
     api_key=os.environ["LLM_API_KEY"],
@@ -119,17 +143,232 @@ def _append_log(record: dict) -> None:
         f.write(block)
 
 
-async def llm_reply(text: str) -> str:
+# ---------------------------------------------------------------------------
+# Tool implementations
+# ---------------------------------------------------------------------------
+
+async def _tool_read(path: str, offset: int | None = None, limit: int | None = None, **_: object) -> str:
+    p = Path(path)
+    if not p.exists():
+        return f"Error: file not found: {path}"
+    if p.is_dir():
+        return f"Error: {path} is a directory — use 'list' instead"
+
+    if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+        return f"[Image file: {path} — binary content not inlined in tool results]"
+
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return f"Error reading file: {exc}"
+
+    lines = text.splitlines()
+    start = max((offset or 1) - 1, 0)
+    selected = lines[start : start + limit] if limit else lines[start:]
+    result = "\n".join(selected)
+
+    encoded = result.encode("utf-8")
+    if len(encoded) > 50 * 1024:
+        result = encoded[: 50 * 1024].decode("utf-8", errors="replace") + "\n... [truncated]"
+    return result
+
+
+async def _tool_list(path: str | None = None, all: bool = True, long: bool = True, **_: object) -> str:
+    p = Path(path) if path else Path.cwd()
+    if not p.exists():
+        return f"Error: path not found: {path}"
+    try:
+        entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
+    except OSError as exc:
+        return f"Error listing directory: {exc}"
+
+    visible = [e for e in entries if all or not e.name.startswith(".")]
+
+    if not long:
+        return "\n".join(e.name + ("/" if e.is_dir() else "") for e in visible)
+
+    lines = [f"total {len(visible)}"]
+    for e in visible:
+        try:
+            st = e.stat()
+            mode = stat.filemode(st.st_mode)
+            size = st.st_size
+            mtime = datetime.fromtimestamp(st.st_mtime).strftime("%b %d %H:%M")
+            lines.append(f"{mode} {size:>10} {mtime} {e.name}{'/' if e.is_dir() else ''}")
+        except OSError:
+            lines.append(f"??????????   0 ??? ?? ??:?? {e.name}")
+    return "\n".join(lines)
+
+
+async def _tool_write(path: str, content: str, **_: object) -> str:
+    p = Path(path)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return f"Written {len(content.encode('utf-8'))} bytes to {path}"
+    except OSError as exc:
+        return f"Error writing file: {exc}"
+
+
+async def _tool_edit(path: str, edits: list, **_: object) -> str:
+    p = Path(path)
+    if not p.exists():
+        return f"Error: file not found: {path}"
+    try:
+        content = p.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"Error reading file: {exc}"
+
+    for i, edit in enumerate(edits):
+        old_text = edit.get("oldText", "")
+        new_text = edit.get("newText", "")
+        if old_text not in content:
+            return f"Error: edit #{i + 1} oldText not found in file: {repr(old_text[:80])}"
+        content = content.replace(old_text, new_text, 1)
+
+    try:
+        p.write_text(content, encoding="utf-8")
+        return f"Edited {path}: applied {len(edits)} replacement(s)"
+    except OSError as exc:
+        return f"Error writing file: {exc}"
+
+
+async def _tool_exec(
+    command: str,
+    workdir: str | None = None,
+    env: dict | None = None,
+    timeout: int | float | None = None,
+    **_: object,
+) -> str:
+    merged_env = {**os.environ, **(env or {})}
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            cwd=workdir,
+            env=merged_env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=float(timeout) if timeout else None,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return "Error: command timed out"
+        return stdout.decode(errors="replace")
+    except Exception as exc:
+        return f"Error executing command: {exc}"
+
+
+async def _execute_tool(name: str, args: dict) -> str:
+    dispatch = {
+        "read": _tool_read,
+        "list": _tool_list,
+        "write": _tool_write,
+        "edit": _tool_edit,
+        "exec": _tool_exec,
+    }
+    handler = dispatch.get(name)
+    if handler is None:
+        return f"Error: unknown tool '{name}'"
+    return await handler(**args)
+
+
+async def _call_openrouter_web_search(messages: list) -> str:
+    """Re-submit the conversation to OpenRouter with the built-in web_search tool."""
+    base_url = os.environ.get("LLM_API_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    url = f"{base_url}/chat/completions"
+    payload = {
+        "model": _model,
+        "messages": messages,
+        "tools": [{"type": "openrouter:web_search"}],
+    }
+    async with httpx.AsyncClient(timeout=60.0) as http:
+        resp = await http.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {os.environ['LLM_API_KEY']}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    return data["choices"][0]["message"]["content"] or ""
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+async def llm_reply(
+    text: str,
+    on_intermediate: Callable[[str], Awaitable[None]] | None = None,
+) -> str:
     call_id = str(uuid4())
     requested_at = datetime.now(timezone.utc).isoformat()
-    latest_messages = _read_latest_chat()
-    request_payload = {
-        "model": _model,
-        "messages": latest_messages + [{"role": "user", "content": text}],
-    }
 
-    response = await _client.chat.completions.create(**request_payload)
-    reply_text = response.choices[0].message.content or ""
+    # Build the message list: system prompt + history + new user message
+    messages: list[dict] = [{"role": "system", "content": _SYSTEM_CONTENT}]
+    messages.extend(_read_latest_chat())
+    messages.append({"role": "user", "content": text})
+
+    last_response = None
+
+    # Agentic loop — keep calling the model until it stops issuing tool calls
+    while True:
+        request_payload = {
+            "model": _model,
+            "messages": messages,
+            "tools": _TOOLS,
+        }
+
+        response = await _client.chat.completions.create(**request_payload)
+        last_response = response
+        choice = response.choices[0]
+        finish_reason = choice.finish_reason
+
+        if finish_reason == "tool_calls":
+            tool_calls = choice.message.tool_calls or []
+
+            # Append the assistant's tool-call message to maintain context
+            assistant_msg = choice.message.model_dump(exclude_none=True)
+            # Ensure tool_calls are serialisable (convert objects → dicts)
+            if "tool_calls" in assistant_msg:
+                assistant_msg["tool_calls"] = [
+                    tc if isinstance(tc, dict) else tc.model_dump(exclude_none=True)
+                    for tc in (choice.message.tool_calls or [])
+                ]
+            messages.append(assistant_msg)
+
+            for tc in tool_calls:
+                fn_name = tc.function.name
+                try:
+                    fn_args = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    fn_args = {}
+
+                if fn_name == "web_search":
+                    if on_intermediate:
+                        await on_intermediate("正在调用 web search 工具...")
+                    result = await _call_openrouter_web_search(messages)
+                    return result
+
+                tool_result = await _execute_tool(fn_name, fn_args)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": tool_result,
+                    }
+                )
+        else:
+            # finish_reason == "stop" (or any non-tool terminal reason)
+            reply_text = choice.message.content or ""
+            break
 
     try:
         new_messages = [
@@ -139,7 +378,6 @@ async def llm_reply(text: str) -> str:
         _append_daily_history(new_messages)
         _update_latest_chat(new_messages)
     except Exception:
-        # History persistence is best-effort and should not break reply generation.
         pass
 
     try:
@@ -149,11 +387,10 @@ async def llm_reply(text: str) -> str:
                 "requested_at": requested_at,
                 "responded_at": datetime.now(timezone.utc).isoformat(),
                 "request": request_payload,
-                "response": response.model_dump(),
+                "response": last_response.model_dump(),
             }
         )
     except Exception:
-        # Logging is best-effort and should not break reply generation.
         pass
 
     return reply_text
