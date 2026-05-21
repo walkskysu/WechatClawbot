@@ -4,6 +4,7 @@ import asyncio
 import configparser
 import json
 import os
+import re
 import stat
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,12 +28,99 @@ _DEFAULT_LATEST_CHAT_LIMIT = 20
 _AGENT_MD_FILE = _ROOT_DIR / "agent" / "agent.md"
 _TOOLS_MD_FILE = _ROOT_DIR / "agent" / "tools.md"
 _TOOLS_JSON_FILE = _ROOT_DIR / "agent" / "tools.json"
+_SKILLS_MD_FILE = _ROOT_DIR / "agent" / "skills.md"
+_AVAILABLE_SKILLS_XML_FILE = _ROOT_DIR / "agent" / "available_skills.xml"
+_SKILLS_DIR = _ROOT_DIR / "skills"
+
+_DEFAULT_MAX_TOOL_CALLS = 20
+_DEFAULT_MAX_SKILL_READS = 5
+
+
+def _parse_skill_frontmatter(skill_md_path: Path) -> dict[str, str]:
+    """Extract name and description from a SKILL.md frontmatter block."""
+    try:
+        text = skill_md_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+
+    # Find the first --- delimiter (allow garbage before it)
+    fm_match = re.search(r"---\n(.*?)\n---", text, re.DOTALL)
+    if not fm_match:
+        return {}
+
+    fm_block = fm_match.group(1)
+    result: dict[str, str] = {}
+    for field in ("name", "description"):
+        m = re.search(rf"^{field}:\s*(.+)$", fm_block, re.MULTILINE)
+        if m:
+            result[field] = m.group(1).strip()
+    return result
+
+
+def _update_available_skills_xml() -> None:
+    """Scan skills/ subdirectories and rebuild available_skills.xml."""
+    if not _SKILLS_DIR.exists():
+        return
+
+    entries: list[str] = []
+    for skill_dir in sorted(_SKILLS_DIR.iterdir()):
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_dir.is_dir() or not skill_md.exists():
+            continue
+
+        meta = _parse_skill_frontmatter(skill_md)
+        name = meta.get("name") or skill_dir.name
+        description = meta.get("description") or ""
+        location = str(skill_md.resolve())
+
+        entries.append(
+            f"  <skill>\n"
+            f"    <name>{name}</name>\n"
+            f"    <description>{description}</description>\n"
+            f"    <location>{location}</location>\n"
+            f"  </skill>"
+        )
+
+    xml = "<available_skills>\n" + \
+        "\n".join(entries) + "\n</available_skills>\n"
+    try:
+        _AVAILABLE_SKILLS_XML_FILE.write_text(xml, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _load_agent_limits() -> tuple[int, int]:
+    """Return (max_tool_calls, max_skill_reads) from server.conf."""
+    if not _SERVER_CONF_FILE.exists():
+        return _DEFAULT_MAX_TOOL_CALLS, _DEFAULT_MAX_SKILL_READS
+
+    conf = configparser.ConfigParser()
+    try:
+        conf.read(_SERVER_CONF_FILE, encoding="utf-8")
+    except (configparser.Error, OSError):
+        return _DEFAULT_MAX_TOOL_CALLS, _DEFAULT_MAX_SKILL_READS
+
+    max_tools = conf.getint("agent", "max_tool_calls",
+                            fallback=_DEFAULT_MAX_TOOL_CALLS)
+    max_skills = conf.getint("agent", "max_skill_reads",
+                             fallback=_DEFAULT_MAX_SKILL_READS)
+    return max(1, max_tools), max(1, max_skills)
+
+
+# Rebuild available_skills.xml from local skills directories on startup
+_update_available_skills_xml()
 
 _SYSTEM_CONTENT: str = "\n\n".join(
     part
     for part in [
-        _AGENT_MD_FILE.read_text(encoding="utf-8") if _AGENT_MD_FILE.exists() else "",
-        _TOOLS_MD_FILE.read_text(encoding="utf-8") if _TOOLS_MD_FILE.exists() else "",
+        _AGENT_MD_FILE.read_text(
+            encoding="utf-8") if _AGENT_MD_FILE.exists() else "",
+        _TOOLS_MD_FILE.read_text(
+            encoding="utf-8") if _TOOLS_MD_FILE.exists() else "",
+        _SKILLS_MD_FILE.read_text(
+            encoding="utf-8") if _SKILLS_MD_FILE.exists() else "",
+        _AVAILABLE_SKILLS_XML_FILE.read_text(
+            encoding="utf-8") if _AVAILABLE_SKILLS_XML_FILE.exists() else "",
     ]
     if part.strip()
 )
@@ -164,12 +252,13 @@ async def _tool_read(path: str, offset: int | None = None, limit: int | None = N
 
     lines = text.splitlines()
     start = max((offset or 1) - 1, 0)
-    selected = lines[start : start + limit] if limit else lines[start:]
+    selected = lines[start: start + limit] if limit else lines[start:]
     result = "\n".join(selected)
 
     encoded = result.encode("utf-8")
     if len(encoded) > 50 * 1024:
-        result = encoded[: 50 * 1024].decode("utf-8", errors="replace") + "\n... [truncated]"
+        result = encoded[: 50 *
+                         1024].decode("utf-8", errors="replace") + "\n... [truncated]"
     return result
 
 
@@ -178,7 +267,8 @@ async def _tool_list(path: str | None = None, all: bool = True, long: bool = Tru
     if not p.exists():
         return f"Error: path not found: {path}"
     try:
-        entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))
+        entries = sorted(p.iterdir(), key=lambda e: (
+            e.is_file(), e.name.lower()))
     except OSError as exc:
         return f"Error listing directory: {exc}"
 
@@ -194,7 +284,8 @@ async def _tool_list(path: str | None = None, all: bool = True, long: bool = Tru
             mode = stat.filemode(st.st_mode)
             size = st.st_size
             mtime = datetime.fromtimestamp(st.st_mtime).strftime("%b %d %H:%M")
-            lines.append(f"{mode} {size:>10} {mtime} {e.name}{'/' if e.is_dir() else ''}")
+            lines.append(
+                f"{mode} {size:>10} {mtime} {e.name}{'/' if e.is_dir() else ''}")
         except OSError:
             lines.append(f"??????????   0 ??? ?? ??:?? {e.name}")
     return "\n".join(lines)
@@ -279,7 +370,8 @@ async def _execute_tool(name: str, args: dict) -> str:
 
 async def _call_openrouter_web_search(messages: list) -> str:
     """Re-submit the conversation to OpenRouter with the built-in web_search tool."""
-    base_url = os.environ.get("LLM_API_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    base_url = os.environ.get(
+        "LLM_API_URL", "https://openrouter.ai/api/v1").rstrip("/")
     url = f"{base_url}/chat/completions"
     payload = {
         "model": _model,
@@ -317,6 +409,7 @@ async def llm_reply(
     messages.append({"role": "user", "content": text})
 
     last_response = None
+    max_tool_calls, max_skill_reads = _load_agent_limits()
 
     # Agentic loop — keep calling the model until it stops issuing tool calls
     while True:
@@ -339,10 +432,15 @@ async def llm_reply(
             # Ensure tool_calls are serialisable (convert objects → dicts)
             if "tool_calls" in assistant_msg:
                 assistant_msg["tool_calls"] = [
-                    tc if isinstance(tc, dict) else tc.model_dump(exclude_none=True)
+                    tc if isinstance(tc, dict) else tc.model_dump(
+                        exclude_none=True)
                     for tc in (choice.message.tool_calls or [])
                 ]
             messages.append(assistant_msg)
+
+            # Per-cycle counters — reset at the start of each tool-call batch
+            cycle_tool_count = 0
+            cycle_skill_count = 0
 
             for tc in tool_calls:
                 fn_name = tc.function.name
@@ -357,7 +455,31 @@ async def llm_reply(
                     result = await _call_openrouter_web_search(messages)
                     return result
 
+                # Enforce tool call limit for this cycle
+                if cycle_tool_count >= max_tool_calls:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": f"Error: tool call limit ({max_tool_calls}) reached for this turn.",
+                    })
+                    continue
+
+                # Enforce skill read limit (reads targeting a SKILL.md file)
+                if fn_name == "read":
+                    read_path = fn_args.get("path", "")
+                    if read_path.upper().endswith("SKILL.MD"):
+                        if cycle_skill_count >= max_skill_reads:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": f"Error: skill read limit ({max_skill_reads}) reached for this turn.",
+                            })
+                            cycle_tool_count += 1
+                            continue
+                        cycle_skill_count += 1
+
                 tool_result = await _execute_tool(fn_name, fn_args)
+                cycle_tool_count += 1
                 messages.append(
                     {
                         "role": "tool",
@@ -365,6 +487,7 @@ async def llm_reply(
                         "content": tool_result,
                     }
                 )
+            # Cycle complete — counters will reset on the next iteration
         else:
             # finish_reason == "stop" (or any non-tool terminal reason)
             reply_text = choice.message.content or ""
