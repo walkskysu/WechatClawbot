@@ -55,13 +55,20 @@ python main.py
 
 ## 配置说明
 
+
 ### server.conf（可选）
 
-控制最近对话上下文的保留条数（默认 20 条）：
+控制最近对话上下文的保留条数（默认 20 条），以及工具/技能调用上限：
 
 ```ini
 [server]
-latest_chat_limit = 30
+latest_chat_limit = 20
+
+[agent]
+# 每轮最多允许 LLM 批量调用多少次工具（每次完整 tool_calls 批次后自动重置，支持多轮循环）
+max_tool_calls = 20
+# 每轮最多允许读取多少次 SKILL.md（技能说明）
+max_skill_reads = 5
 ```
 
 ### agent/agent.md
@@ -72,16 +79,25 @@ LLM 的系统角色提示，可自由修改以调整 AI 的人设和行为。
 
 定义 LLM 可调用的工具集及其说明。内置工具：
 
-| 工具         | 说明                                 |
-| ------------ | ------------------------------------ |
-| `read`       | 读取文件内容（支持分页）             |
-| `list`       | 列出目录内容（`ls -al` 风格）        |
-| `write`      | 创建或覆盖文件                       |
-| `edit`       | 精确文本替换编辑文件                 |
-| `exec`       | 执行 Shell 命令                      |
+| 工具 | 说明 |
+|------|------|
+| `read` | 读取文件内容（支持分页） |
+| `list` | 列出目录内容（`ls -al` 风格） |
+| `write` | 创建或覆盖文件 |
+| `edit` | 精确文本替换编辑文件 |
+| `exec` | 执行 Shell 命令 |
 | `web_search` | 网络搜索（通过 OpenRouter 内置工具） |
 
 ## 注意事项
+- `cred/wechat.json` 包含登录凭证，请加入 `.gitignore` 避免泄露
+- `exec` 工具允许 LLM 执行任意命令，请确保只在可信环境中运行
+- 网络搜索功能依赖 OpenRouter 的 `openrouter:web_search` 插件
+
+## 技能系统（skills 自动注入与同步）
+
+- **系统提示自动注入**：每次新对话，`agent/skills.md` 和 `agent/available_skills.xml` 会自动注入到 LLM 的 system prompt，确保技能选择和调用规则始终生效。
+- **技能目录自动同步**：每次启动时会自动扫描 `skills/` 目录下所有子文件夹，读取每个技能的 `SKILL.md` 前置元数据（name/description），并自动生成/更新 `agent/available_skills.xml`，无需手动维护。
+- **调用上限可配置且自动重置**：`server.conf` 可配置 tools/skills 调用上限，每次完整的 tools 调用批次后计数器自动重置，支持多轮复杂推理。
 
 - `cred/wechat.json` 包含登录凭证，请加入 `.gitignore` 避免泄露
 - `exec` 工具允许 LLM 执行任意命令，请确保只在可信环境中运行
