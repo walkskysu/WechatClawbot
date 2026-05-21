@@ -1,10 +1,11 @@
 """WeChat bot that replies using an LLM (OpenAI-compatible API)."""
 
+
 import asyncio
 import qrcode
-
 from dotenv import load_dotenv
 from wechatbot import WeChatBot
+import threading
 
 load_dotenv()
 
@@ -20,6 +21,7 @@ def print_terminal_qr(url: str) -> None:
     qr.print_ascii(invert=True)
 
 
+
 async def main():
     bot = WeChatBot(
         cred_path="./cred/wechat.json",
@@ -32,6 +34,8 @@ async def main():
     creds = await bot.login()
     print(f"Logged in: {creds.account_id} ({creds.user_id})")
 
+    input_queue = asyncio.Queue()
+    output_queue = asyncio.Queue()
     count = 0
 
     @bot.on_message
@@ -39,14 +43,29 @@ async def main():
         nonlocal count
         count += 1
         print(f"[{count}] {msg.user_id}: {msg.text}")
+        await input_queue.put(msg)
 
-        await bot.send_typing(msg.user_id)
+    async def process_worker():
+        while True:
+            msg = await input_queue.get()
+            await bot.send_typing(msg.user_id)
 
-        async def _send_intermediate(notice: str) -> None:
-            await bot.reply(msg, notice)
+            async def _send_intermediate(notice: str) -> None:
+                await output_queue.put((msg, notice))
 
-        reply_text = await llm_reply(msg.text, on_intermediate=_send_intermediate)
-        await bot.reply(msg, reply_text)
+            reply_text = await llm_reply(msg.text, on_intermediate=_send_intermediate)
+            await output_queue.put((msg, reply_text))
+            input_queue.task_done()
+
+    async def reply_worker():
+        while True:
+            msg, reply = await output_queue.get()
+            await bot.reply(msg, reply)
+            output_queue.task_done()
+
+    # 启动后台worker
+    asyncio.create_task(process_worker())
+    asyncio.create_task(reply_worker())
 
     print("Listening for messages (Ctrl+C to stop)")
     try:
