@@ -255,5 +255,36 @@
     "parameters": {
       "search_context_size": "medium"
     }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "generate_image",
+      "description": "Generate an image from a text prompt using OpenRouter's image generation API. Saves the image to a local file and returns the file path. After generating, use wechat_reply_media with media_type='image' and the returned path to send it to the user.",
+      "parameters": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["prompt"],
+        "properties": {
+          "prompt": {
+            "description": "Text description of the image to generate.",
+            "type": "string"
+          },
+          "model": {
+            "description": "Image generation model (default: openai/gpt-5.4-image-2).",
+            "type": "string"
+          },
+          "quality": {
+            "description": "Image quality: 'high', 'medium', or 'low' (default: high).",
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "output_path": {
+            "description": "Optional local path to save the image. Defaults to outputs/<timestamp>.png.",
+            "type": "string"
+          }
+        }
+      }
+    }
   }
 ]
