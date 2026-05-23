@@ -354,7 +354,87 @@ async def _tool_exec(
         return f"Error executing command: {exc}"
 
 
-async def _execute_tool(name: str, args: dict) -> str:
+def _build_media_content(
+    media_type: str,
+    data: bytes,
+    file_name: str | None,
+    path_name: str,
+    caption: str | None,
+) -> dict | str:
+    """Return the content dict for bot.reply_media / bot.send_media, or an error string."""
+    if media_type == "image":
+        return {"image": data}
+    if media_type == "file":
+        return {"file": data, "file_name": file_name or path_name}
+    if media_type == "video":
+        content: dict = {"video": data}
+        if caption:
+            content["caption"] = caption
+        return content
+    return f"Error: unknown media_type '{media_type}'"
+
+
+async def _tool_wechat_reply_media(
+    media_type: str,
+    path: str,
+    file_name: str | None = None,
+    caption: str | None = None,
+    *,
+    bot,
+    msg,
+    **_: object,
+) -> str:
+    p = Path(path)
+    if not p.exists():
+        return f"Error: file not found: {path}"
+    try:
+        data = p.read_bytes()
+    except OSError as exc:
+        return f"Error reading file: {exc}"
+
+    content = _build_media_content(
+        media_type, data, file_name, p.name, caption)
+    if isinstance(content, str):
+        return content
+
+    try:
+        await bot.reply_media(msg, content)
+        return f"Sent {media_type} ({len(data)} bytes) to conversation"
+    except Exception as exc:
+        return f"Error sending media: {exc}"
+
+
+async def _tool_wechat_send_media(
+    user_id: str,
+    media_type: str,
+    path: str,
+    file_name: str | None = None,
+    caption: str | None = None,
+    *,
+    bot,
+    **_: object,
+) -> str:
+    p = Path(path)
+    if not p.exists():
+        return f"Error: file not found: {path}"
+    try:
+        data = p.read_bytes()
+    except OSError as exc:
+        return f"Error reading file: {exc}"
+
+    content = _build_media_content(
+        media_type, data, file_name, p.name, caption)
+    if isinstance(content, str):
+        return content
+
+    try:
+        await bot.send_media(user_id, content)
+        return f"Sent {media_type} ({len(data)} bytes) to user {user_id}"
+    except Exception as exc:
+        return f"Error sending media: {exc}"
+
+
+async def _execute_tool(name: str, args: dict, bot=None, msg=None) -> str:
     dispatch = {
         "read": _tool_read,
         "list": _tool_list,
@@ -363,9 +443,20 @@ async def _execute_tool(name: str, args: dict) -> str:
         "exec": _tool_exec,
     }
     handler = dispatch.get(name)
-    if handler is None:
-        return f"Error: unknown tool '{name}'"
-    return await handler(**args)
+    if handler is not None:
+        return await handler(**args)
+
+    if name == "wechat_reply_media":
+        if bot is None or msg is None:
+            return "Error: wechat_reply_media requires active bot/message context"
+        return await _tool_wechat_reply_media(**args, bot=bot, msg=msg)
+
+    if name == "wechat_send_media":
+        if bot is None:
+            return "Error: wechat_send_media requires active bot context"
+        return await _tool_wechat_send_media(**args, bot=bot)
+
+    return f"Error: unknown tool '{name}'"
 
 
 async def _call_openrouter_web_search(messages: list) -> str:
@@ -399,6 +490,8 @@ async def _call_openrouter_web_search(messages: list) -> str:
 async def llm_reply(
     text: str,
     on_intermediate: Callable[[str], Awaitable[None]] | None = None,
+    bot=None,
+    msg=None,
 ) -> str:
     call_id = str(uuid4())
     requested_at = datetime.now(timezone.utc).isoformat()
@@ -478,7 +571,7 @@ async def llm_reply(
                             continue
                         cycle_skill_count += 1
 
-                tool_result = await _execute_tool(fn_name, fn_args)
+                tool_result = await _execute_tool(fn_name, fn_args, bot=bot, msg=msg)
                 cycle_tool_count += 1
                 messages.append(
                     {

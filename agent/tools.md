@@ -9,6 +9,8 @@ Tool names are case-sensitive. Call tools exactly as listed.
 - edit: Make precise edits to files
 - exec: Run shell commands (pty available for TTY-required CLIs)
 - web_search: Search the web (Brave API)
+- wechat_reply_media: Reply to the current WeChat conversation with a file — supports images (PNG/JPG/GIF/WEBP), documents (DOC/DOCX/PDF/XLS/XLSX/PPT/PPTX/TXT/CSV/ZIP/etc.), and videos (MP4); reads from a local path
+- wechat_send_media: Proactively send a file (image/document/video) to a specific WeChat user by user_id
 
 ## Tool Call Style
 

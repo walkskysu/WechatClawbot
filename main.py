@@ -21,7 +21,6 @@ def print_terminal_qr(url: str) -> None:
     qr.print_ascii(invert=True)
 
 
-
 async def main():
     bot = WeChatBot(
         cred_path="./cred/wechat.json",
@@ -53,7 +52,7 @@ async def main():
             async def _send_intermediate(notice: str) -> None:
                 await output_queue.put((msg, notice))
 
-            reply_text = await llm_reply(msg.text, on_intermediate=_send_intermediate)
+            reply_text = await llm_reply(msg.text, on_intermediate=_send_intermediate, bot=bot, msg=msg)
             await output_queue.put((msg, reply_text))
             input_queue.task_done()
 

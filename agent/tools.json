@@ -185,6 +185,72 @@
     }
   },
   {
+    "type": "function",
+    "function": {
+      "name": "wechat_reply_media",
+      "description": "Reply to the current WeChat conversation with a file. Reads the file from disk and sends it as an image, document, or video. Supported types — image: PNG/JPG/GIF/WEBP; file: any document including DOC/DOCX/PDF/XLS/XLSX/PPT/PPTX/TXT/CSV/ZIP and more; video: MP4. Use this after generating or writing a file that should be delivered to the user.",
+      "parameters": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["media_type", "path"],
+        "properties": {
+          "media_type": {
+            "description": "Kind of content to send: 'image' (PNG/JPG/GIF/WEBP), 'file' (any document: DOC/DOCX/PDF/XLS/XLSX/PPT/PPTX/TXT/CSV/ZIP/etc.), or 'video' (MP4).",
+            "type": "string",
+            "enum": ["image", "file", "video"]
+          },
+          "path": {
+            "description": "Local file path to the file to send.",
+            "type": "string"
+          },
+          "file_name": {
+            "description": "Display filename shown to the recipient. Defaults to the basename of path. Recommended when media_type is 'file' to ensure the correct extension is shown.",
+            "type": "string"
+          },
+          "caption": {
+            "description": "Optional caption text attached to the content (supported for video).",
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "wechat_send_media",
+      "description": "Proactively send a file to a specific WeChat user by user_id. Supports images, documents (DOC/DOCX/PDF/XLS/XLSX/PPT/PPTX/TXT/CSV/ZIP/etc.), and videos. Requires a prior context_token from an existing conversation with that user.",
+      "parameters": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["user_id", "media_type", "path"],
+        "properties": {
+          "user_id": {
+            "description": "WeChat user ID of the recipient.",
+            "type": "string"
+          },
+          "media_type": {
+            "description": "Kind of content to send: 'image' (PNG/JPG/GIF/WEBP), 'file' (any document: DOC/DOCX/PDF/XLS/XLSX/PPT/PPTX/TXT/CSV/ZIP/etc.), or 'video' (MP4).",
+            "type": "string",
+            "enum": ["image", "file", "video"]
+          },
+          "path": {
+            "description": "Local file path to the file to send.",
+            "type": "string"
+          },
+          "file_name": {
+            "description": "Display filename shown to the recipient. Defaults to the basename of path. Recommended when media_type is 'file' to ensure the correct extension is shown.",
+            "type": "string"
+          },
+          "caption": {
+            "description": "Optional caption text attached to the content (supported for video).",
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  {
     "type": "openrouter:web_search",
     "parameters": {
       "search_context_size": "medium"
