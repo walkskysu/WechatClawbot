@@ -654,6 +654,7 @@ async def llm_reply(
 
     last_response = None
     max_tool_calls, max_skill_reads = _load_agent_limits()
+    tool_ack_sent = False
 
     # Agentic loop — keep calling the model until it stops issuing tool calls
     while True:
@@ -670,6 +671,11 @@ async def llm_reply(
 
         if finish_reason == "tool_calls":
             tool_calls = choice.message.tool_calls or []
+
+            # Notify user once before executing the first tool-call batch.
+            if not tool_ack_sent and on_intermediate:
+                await on_intermediate("好的，我开始工作了")
+                tool_ack_sent = True
 
             # Append the assistant's tool-call message to maintain context
             assistant_msg = choice.message.model_dump(exclude_none=True)
