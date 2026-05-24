@@ -2,6 +2,7 @@
 
 
 import asyncio
+import logging
 import qrcode
 from dotenv import load_dotenv
 from wechatbot import WeChatBot
@@ -22,6 +23,8 @@ def print_terminal_qr(url: str) -> None:
 
 
 async def main():
+    logging.basicConfig(level=logging.INFO)
+
     bot = WeChatBot(
         cred_path="./cred/wechat.json",
         on_qr_url=print_terminal_qr,
@@ -47,14 +50,19 @@ async def main():
     async def process_worker():
         while True:
             msg = await input_queue.get()
-            await bot.send_typing(msg.user_id)
+            try:
+                await bot.send_typing(msg.user_id)
 
-            async def _send_intermediate(notice: str) -> None:
-                await output_queue.put((msg, notice))
+                async def _send_intermediate(notice: str) -> None:
+                    await output_queue.put((msg, notice))
 
-            reply_text = await llm_reply(msg.text, on_intermediate=_send_intermediate, bot=bot, msg=msg)
-            await output_queue.put((msg, reply_text))
-            input_queue.task_done()
+                reply_text = await llm_reply(msg.text, on_intermediate=_send_intermediate, bot=bot, msg=msg)
+                await output_queue.put((msg, reply_text))
+            except Exception as exc:
+                logging.exception("LLM call failed for user %s", msg.user_id)
+                await output_queue.put((msg, f"抱歉，调用大模型失败（{type(exc).__name__}）。请稍后重试。"))
+            finally:
+                input_queue.task_done()
 
     async def reply_worker():
         while True:
