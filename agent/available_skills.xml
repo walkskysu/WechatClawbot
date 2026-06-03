@@ -2,11 +2,11 @@
   <skill>
     <name>Agent Browser</name>
     <description>A fast Rust-based headless browser automation CLI with Node.js fallback that enables AI agents to navigate, click, type, and snapshot pages via structured commands.</description>
-    <location>C:\Projects\WechatClawbot\skills\agent-browser\SKILL.md</location>
+    <location>/mnt/c/Projects/WechatClawbot/skills/agent-browser/SKILL.md</location>
   </skill>
   <skill>
     <name>DOCX Generator</name>
     <description>生成 Word DOCX 文件的实用指南，适用于中文报告、通知、合同、模板化文档等场景。</description>
-    <location>C:\Projects\WechatClawbot\skills\docx-generator-cn\SKILL.md</location>
+    <location>/mnt/c/Projects/WechatClawbot/skills/docx-generator-cn/SKILL.md</location>
   </skill>
 </available_skills>
