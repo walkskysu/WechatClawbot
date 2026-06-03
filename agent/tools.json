@@ -260,27 +260,18 @@
     "type": "function",
     "function": {
       "name": "generate_image",
-      "description": "Generate an image from a text prompt using OpenRouter's image generation API. Saves the image to a local file and returns the file path. After generating, use wechat_reply_media with media_type='image' and the returned path to send it to the user.",
+      "description": "使用 codex 生成图片。调用 exec 执行以下命令：codex exec \"使用 $imagegen <prompt>, 输出文件到 <output_path>\" --skip-git-repo-check --sandbox workspace-write。生成完成后使用 wechat_reply_media (media_type='image') 将图片发送给用户。",
       "parameters": {
         "additionalProperties": false,
         "type": "object",
-        "required": ["prompt"],
+        "required": ["prompt", "output_path"],
         "properties": {
           "prompt": {
-            "description": "Text description of the image to generate.",
+            "description": "图片的详细文字描述（中英文均可）。",
             "type": "string"
-          },
-          "model": {
-            "description": "Image generation model (default: openai/gpt-5.4-image-2).",
-            "type": "string"
-          },
-          "quality": {
-            "description": "Image quality: 'high', 'medium', or 'low' (default: high).",
-            "type": "string",
-            "enum": ["high", "medium", "low"]
           },
           "output_path": {
-            "description": "Optional local path to save the image. Defaults to outputs/<timestamp>.png.",
+            "description": "生成图片的本地保存路径，例如 ~/doc/image_YYYYMMDDHHMI.png。",
             "type": "string"
           }
         }
