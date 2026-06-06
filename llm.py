@@ -38,6 +38,20 @@ _SKILLS_DIR = _ROOT_DIR / "skills"
 
 _DEFAULT_MAX_TOOL_CALLS = 20
 _DEFAULT_MAX_SKILL_READS = 5
+_DEFAULT_TOOL_ACK = "好的，我开始工作了"
+
+
+def _load_replies() -> dict[str, str]:
+    """Return reply strings from the [replies] section of server.conf."""
+    conf = configparser.ConfigParser()
+    if _SERVER_CONF_FILE.exists():
+        try:
+            conf.read(_SERVER_CONF_FILE, encoding="utf-8")
+        except (configparser.Error, OSError):
+            pass
+    return {
+        "tool_ack": conf.get("replies", "tool_ack", fallback=_DEFAULT_TOOL_ACK),
+    }
 
 
 def _parse_skill_frontmatter(skill_md_path: Path) -> dict[str, str]:
@@ -250,8 +264,6 @@ def _log_debug(tag: str, message: str) -> None:
 _set_tools_log_debug(_log_debug)
 
 
-
-
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -292,7 +304,7 @@ async def llm_reply(
 
             # Notify user once before executing the first tool-call batch.
             if not tool_ack_sent and on_intermediate:
-                await on_intermediate("好的，我开始工作了")
+                await on_intermediate(_load_replies()["tool_ack"])
                 tool_ack_sent = True
 
             # Append the assistant's tool-call message to maintain context

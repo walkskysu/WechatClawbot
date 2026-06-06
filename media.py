@@ -108,7 +108,8 @@ def _ensure_media_extension(file_name: str, msg_type: str, media_bytes: bytes) -
 async def _transcribe_voice(media_bytes: bytes, audio_format: str) -> str:
     api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY")
     if not api_key:
-        raise RuntimeError("Missing OPENROUTER_API_KEY/LLM_API_KEY for voice transcription")
+        raise RuntimeError(
+            "Missing OPENROUTER_API_KEY/LLM_API_KEY for voice transcription")
 
     base_url = os.getenv("OPENROUTER_API_URL", "https://openrouter.ai/api/v1")
     model = os.getenv("OPENROUTER_AUDIO_MODEL", "openai/gpt-audio-mini")
@@ -142,24 +143,27 @@ async def _transcribe_voice(media_bytes: bytes, audio_format: str) -> str:
     return _extract_voice_text(completion.choices[0].message.content)
 
 
-async def handle_media_message(bot, msg, doc_dir: str, llm_input_text: str) -> str:
+async def handle_media_message(bot, msg, doc_dir: str, llm_input_text: str) -> tuple[str, str | None]:
     """Download, save, and (for voice) transcribe a media message.
 
-    Returns the updated llm_input_text.
+    Returns (updated llm_input_text, saved file path or None).
     """
     media = None
+    saved_path: str | None = None
     try:
         media = await bot.download(msg)
     except Exception as exc:
-        logging.warning("Failed to download media from %s: %s", msg.user_id, exc)
+        logging.warning("Failed to download media from %s: %s",
+                        msg.user_id, exc)
 
     if media:
         file_name = media.file_name or f"{msg.type}_{int(msg.timestamp.timestamp())}"
         file_name = _ensure_media_extension(file_name, msg.type, media.data)
-        save_path = os.path.join(doc_dir, file_name)
-        with open(save_path, "wb") as f:
+        saved_path = os.path.join(doc_dir, file_name)
+        with open(saved_path, "wb") as f:
             f.write(media.data)
-        print(f"  Downloaded {msg.type} -> {save_path} ({len(media.data)} bytes)")
+        print(
+            f"  Downloaded {msg.type} -> {saved_path} ({len(media.data)} bytes)")
 
         if msg.type == "voice":
             # WeChat often provides recognized text in msg.text for voice messages.
@@ -197,4 +201,4 @@ async def handle_media_message(bot, msg, doc_dir: str, llm_input_text: str) -> s
             else:
                 await bot.reply(msg, "收到消息如下:(语音转写失败，请重试)")
 
-    return llm_input_text
+    return llm_input_text, saved_path

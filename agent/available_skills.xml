@@ -9,4 +9,9 @@
     <description>生成 Word DOCX 文件的实用指南，适用于中文报告、通知、合同、模板化文档等场景。</description>
     <location>/mnt/c/Projects/WechatClawbot/skills/docx-generator-cn/SKILL.md</location>
   </skill>
+  <skill>
+    <name>pdf</name>
+    <description>Comprehensive PDF manipulation toolkit for extracting text and tables, creating new PDFs, merging/splitting documents, and handling forms. When Claude needs to fill in a PDF form or programmatically process, generate, or analyze PDF documents at scale.</description>
+    <location>/mnt/c/Projects/WechatClawbot/skills/pdf-operator/SKILL.md</location>
+  </skill>
 </available_skills>
