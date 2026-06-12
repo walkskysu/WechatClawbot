@@ -10,6 +10,8 @@ from typing import Callable
 
 import httpx
 
+from job_manager import get_manager as _get_job_manager
+
 _ROOT_DIR = Path(__file__).resolve().parent
 _model: str = os.environ.get("LLM_MODEL", "")
 
@@ -149,34 +151,24 @@ async def _tool_exec(
     workdir: str | None = None,
     env: dict | None = None,
     timeout: int | float | None = None,
+    msg: object = None,
     **_: object,
 ) -> str:
-    merged_env = {**os.environ, **(env or {})}
-    try:
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            cwd=workdir,
-            env=merged_env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        try:
-            stdout, _ = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=float(timeout) if timeout else None,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            return "Error: command timed out"
-        return stdout.decode(errors="replace")
-    except Exception as exc:
-        return f"Error executing command: {exc}"
+    return await _get_job_manager().run_job(
+        command=command,
+        name=f"exec: {command[:80]}",
+        cwd=workdir,
+        env=env,
+        timeout=float(timeout) if timeout else None,
+        user_id=getattr(msg, "user_id", None),
+        msg=msg,
+    )
 
 
 async def _tool_generate_image(
     prompt: str,
     output_path: str | None = None,
+    msg: object = None,
     **_: object,
 ) -> str:
     """Run codex locally to generate an image using $imagegen."""
@@ -192,21 +184,17 @@ async def _tool_generate_image(
     )
     _log_debug("generate_image", f"EXEC command={command!r}")
 
-    try:
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        stdout, _ = await proc.communicate()
-        output = stdout.decode(errors="replace")
-        _log_debug("generate_image", f"EXEC returncode={proc.returncode} output={output!r}")
-        if proc.returncode != 0:
-            return f"Error: codex exited with code {proc.returncode}:\n{output}"
-        return f"Image saved to {output_path}\n{output}".strip()
-    except Exception as exc:
-        _log_debug("generate_image", f"EXEC_EXCEPTION {type(exc).__name__}: {exc}")
-        return f"Error running codex: {exc}"
+    output = await _get_job_manager().run_job(
+        command=command,
+        name=f"generate_image: {prompt[:60]}",
+        user_id=getattr(msg, "user_id", None),
+        msg=msg,
+        check_returncode=True,
+    )
+    _log_debug("generate_image", f"EXEC output={output!r}")
+    if output.startswith("Error:"):
+        return output
+    return f"Image saved to {output_path}\n{output}".strip()
 
 
 async def _tool_wechat_reply_media(
@@ -284,7 +272,7 @@ async def _execute_tool(name: str, args: dict, bot=None, msg=None) -> str:
     }
     handler = dispatch.get(name)
     if handler is not None:
-        return await handler(**args)
+        return await handler(**args, bot=bot, msg=msg)
 
     if name == "wechat_reply_media":
         if bot is None or msg is None:

@@ -20,6 +20,7 @@ REPLY_FILE_RECEIVED: str = _conf.get(
 
 from llm import llm_reply  # noqa: E402 — must import after load_dotenv
 from media import handle_media_message  # noqa: E402
+from job_manager import get_manager as _get_job_manager  # noqa: E402
 
 
 def print_terminal_qr(url: str) -> None:
@@ -44,6 +45,10 @@ async def main():
 
     creds = await bot.login()
     print(f"Logged in: {creds.account_id} ({creds.user_id})")
+
+    _jm = _get_job_manager()
+    _jm.set_bot(bot)
+    _jm.start_monitor()
 
     input_queue = asyncio.Queue()
     output_queue = asyncio.Queue()
