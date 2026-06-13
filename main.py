@@ -17,6 +17,8 @@ _conf.read(os.path.join(os.path.dirname(__file__),
            "server.conf"), encoding="utf-8")
 REPLY_FILE_RECEIVED: str = _conf.get(
     "replies", "file_received", fallback="收到，请问下一步怎么处理？")
+MAX_REPLY_CHARS: int = _conf.getint(
+    "replies", "max_text_chunk_chars", fallback=1500)
 
 from llm import llm_reply  # noqa: E402 — must import after load_dotenv
 from media import handle_media_message  # noqa: E402
@@ -30,6 +32,61 @@ def print_terminal_qr(url: str) -> None:
     qr.add_data(url)
     qr.make(fit=True)
     qr.print_ascii(invert=True)
+
+
+def _normalize_reply_text(reply: object) -> str:
+    if reply is None:
+        return ""
+    if isinstance(reply, str):
+        return reply
+    return str(reply)
+
+
+def _split_reply_text(reply: object, limit: int = MAX_REPLY_CHARS) -> list[str]:
+    text = _normalize_reply_text(reply)
+    if not text:
+        return ["抱歉，这次没有生成可发送的内容。"]
+
+    if limit <= 0 or len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    start = 0
+    text_len = len(text)
+    while start < text_len:
+        end = min(start + limit, text_len)
+        if end < text_len:
+            split_at = text.rfind("\n", start, end)
+            if split_at <= start:
+                split_at = text.rfind(" ", start, end)
+            if split_at > start:
+                end = split_at
+
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        start = end
+        while start < text_len and text[start] in ("\n", " "):
+            start += 1
+
+    return chunks or ["抱歉，这次没有生成可发送的内容。"]
+
+
+async def _safe_reply(bot: WeChatBot, msg, reply: object) -> bool:
+    chunks = _split_reply_text(reply)
+    for index, chunk in enumerate(chunks, start=1):
+        try:
+            await bot.reply(msg, chunk)
+        except Exception:
+            logging.exception(
+                "Reply send failed for user %s (chunk %s/%s, len=%s)",
+                msg.user_id,
+                index,
+                len(chunks),
+                len(chunk),
+            )
+            return False
+    return True
 
 
 async def main():
@@ -94,7 +151,7 @@ async def main():
             except Exception as exc:
                 logging.exception("codex exec failed")
                 output = f"执行失败：{exc}"
-            await bot.reply(msg, output)
+            await _safe_reply(bot, msg, output)
             return
 
         llm_input_text = msg.text
@@ -105,7 +162,7 @@ async def main():
             # File upload: pause LLM and ask user for processing instructions
             if msg.type == "file" and saved_path:
                 pending_files[msg.user_id] = saved_path
-                await bot.reply(msg, REPLY_FILE_RECEIVED)
+                await _safe_reply(bot, msg, REPLY_FILE_RECEIVED)
                 return
 
         await input_queue.put((msg, llm_input_text))
@@ -130,8 +187,10 @@ async def main():
     async def reply_worker():
         while True:
             msg, reply = await output_queue.get()
-            await bot.reply(msg, reply)
-            output_queue.task_done()
+            try:
+                await _safe_reply(bot, msg, reply)
+            finally:
+                output_queue.task_done()
 
     # 启动后台worker
     asyncio.create_task(process_worker())
