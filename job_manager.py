@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from wechat_logging import call_wechat_bot_async
+
 _ROOT_DIR = Path(__file__).resolve().parent
 _STATE_DIR = _ROOT_DIR / "state"
 _HISTORY_DIR = _ROOT_DIR / "history"
@@ -99,7 +101,15 @@ class JobManager:
         for _pid, (user_id, msg) in list(self._active.items()):
             if user_id and msg is not None and user_id not in notified:
                 try:
-                    await self._bot.reply(msg, text)
+                    await call_wechat_bot_async(
+                        "reply",
+                        self._bot.reply,
+                        msg,
+                        text,
+                        user_id=user_id,
+                        msg=msg,
+                        detail="job_status_report",
+                    )
                     notified.add(user_id)
                 except Exception:
                     pass

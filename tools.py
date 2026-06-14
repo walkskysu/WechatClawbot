@@ -11,6 +11,7 @@ from typing import Callable
 import httpx
 
 from job_manager import get_manager as _get_job_manager
+from wechat_logging import call_wechat_bot_async
 
 _ROOT_DIR = Path(__file__).resolve().parent
 _model: str = os.environ.get("LLM_MODEL", "")
@@ -221,7 +222,14 @@ async def _tool_wechat_reply_media(
         return content
 
     try:
-        await bot.reply_media(msg, content)
+        await call_wechat_bot_async(
+            "reply_media",
+            bot.reply_media,
+            msg,
+            content,
+            msg=msg,
+            detail=f"media_type={media_type}, bytes={len(data)}",
+        )
         return f"Sent {media_type} ({len(data)} bytes) to conversation"
     except Exception as exc:
         return f"Error sending media: {exc}"
@@ -251,7 +259,14 @@ async def _tool_wechat_send_media(
         return content
 
     try:
-        await bot.send_media(user_id, content)
+        await call_wechat_bot_async(
+            "send_media",
+            bot.send_media,
+            user_id,
+            content,
+            user_id=user_id,
+            detail=f"media_type={media_type}, bytes={len(data)}",
+        )
         return f"Sent {media_type} ({len(data)} bytes) to user {user_id}"
     except Exception as exc:
         return f"Error sending media: {exc}"

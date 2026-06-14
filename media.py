@@ -6,6 +6,8 @@ import os
 
 from openai import AsyncOpenAI
 
+from wechat_logging import call_wechat_bot_async
+
 
 def _extract_voice_text(content) -> str:
     if isinstance(content, str):
@@ -151,7 +153,12 @@ async def handle_media_message(bot, msg, doc_dir: str, llm_input_text: str) -> t
     media = None
     saved_path: str | None = None
     try:
-        media = await bot.download(msg)
+        media = await call_wechat_bot_async(
+            "download",
+            bot.download,
+            msg,
+            msg=msg,
+        )
     except Exception as exc:
         logging.warning("Failed to download media from %s: %s",
                         msg.user_id, exc)
@@ -197,8 +204,22 @@ async def handle_media_message(bot, msg, doc_dir: str, llm_input_text: str) -> t
                     )
 
             if llm_input_text:
-                await bot.reply(msg, f"收到消息如下:{llm_input_text}")
+                await call_wechat_bot_async(
+                    "reply",
+                    bot.reply,
+                    msg,
+                    f"收到消息如下:{llm_input_text}",
+                    msg=msg,
+                    detail="voice_transcript_echo",
+                )
             else:
-                await bot.reply(msg, "收到消息如下:(语音转写失败，请重试)")
+                await call_wechat_bot_async(
+                    "reply",
+                    bot.reply,
+                    msg,
+                    "收到消息如下:(语音转写失败，请重试)",
+                    msg=msg,
+                    detail="voice_transcript_echo_failed",
+                )
 
     return llm_input_text, saved_path

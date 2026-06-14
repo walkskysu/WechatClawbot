@@ -23,6 +23,7 @@ MAX_REPLY_CHARS: int = _conf.getint(
 from llm import llm_reply  # noqa: E402 — must import after load_dotenv
 from media import handle_media_message  # noqa: E402
 from job_manager import get_manager as _get_job_manager  # noqa: E402
+from wechat_logging import call_wechat_bot_async, call_wechat_bot_sync  # noqa: E402
 
 
 def print_terminal_qr(url: str) -> None:
@@ -76,15 +77,15 @@ async def _safe_reply(bot: WeChatBot, msg, reply: object) -> bool:
     chunks = _split_reply_text(reply)
     for index, chunk in enumerate(chunks, start=1):
         try:
-            await bot.reply(msg, chunk)
-        except Exception:
-            logging.exception(
-                "Reply send failed for user %s (chunk %s/%s, len=%s)",
-                msg.user_id,
-                index,
-                len(chunks),
-                len(chunk),
+            await call_wechat_bot_async(
+                "reply",
+                bot.reply,
+                msg,
+                chunk,
+                msg=msg,
+                detail=f"chunk={index}/{len(chunks)}, len={len(chunk)}",
             )
+        except Exception:
             return False
     return True
 
@@ -100,7 +101,7 @@ async def main():
         on_error=lambda err: print(f"Error: {err}"),
     )
 
-    creds = await bot.login()
+    creds = await call_wechat_bot_async("login", bot.login)
     print(f"Logged in: {creds.account_id} ({creds.user_id})")
 
     _jm = _get_job_manager()
@@ -171,7 +172,12 @@ async def main():
         while True:
             msg, llm_input_text = await input_queue.get()
             try:
-                await bot.send_typing(msg.user_id)
+                await call_wechat_bot_async(
+                    "send_typing",
+                    bot.send_typing,
+                    msg.user_id,
+                    user_id=msg.user_id,
+                )
 
                 async def _send_intermediate(notice: str) -> None:
                     await output_queue.put((msg, notice))
@@ -198,9 +204,9 @@ async def main():
 
     print("Listening for messages (Ctrl+C to stop)")
     try:
-        await bot.start()
+        await call_wechat_bot_async("start", bot.start)
     except KeyboardInterrupt:
-        bot.stop()
+        call_wechat_bot_sync("stop", bot.stop)
     print(f"Stopped. Processed {count} messages.")
 
 
