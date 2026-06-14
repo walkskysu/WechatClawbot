@@ -1,8 +1,8 @@
 """Manual WeChat reply_media test for large file uploads.
 
 Run this script, scan the QR code, then send a trigger message from the target
-conversation. The bot will reply to that message with the configured PPTX and
-PNG files using WeChatBot.reply_media.
+conversation. The bot will reply to that message with the configured PNG and
+PPTX files using WeChatBot.reply_media.
 """
 
 import argparse
@@ -69,7 +69,8 @@ def _validate_file(path_str: str, expected_suffix: str) -> Path:
     if not path.is_file():
         raise ValueError(f"Path is not a file: {path}")
     if path.suffix.lower() != expected_suffix:
-        raise ValueError(f"Expected a {expected_suffix} file, got: {path.name}")
+        raise ValueError(
+            f"Expected a {expected_suffix} file, got: {path.name}")
     return path
 
 
@@ -98,7 +99,8 @@ async def main() -> None:
     target_user_id = args.user_id.strip()
 
     logging.basicConfig(level=logging.INFO)
-    logging.info("PPTX ready: %s (%d bytes)", pptx_path, pptx_path.stat().st_size)
+    logging.info("PPTX ready: %s (%d bytes)",
+                 pptx_path, pptx_path.stat().st_size)
     logging.info("PNG ready: %s (%d bytes)", png_path, png_path.stat().st_size)
     if trigger_text == "*":
         logging.info("Trigger mode: any text message")
@@ -129,27 +131,31 @@ async def main() -> None:
 
         msg_text = (msg.text or "").strip()
         if msg.type != "text":
-            logging.info("Ignoring non-text message from %s (type=%s)", msg.user_id, msg.type)
+            logging.info(
+                "Ignoring non-text message from %s (type=%s)", msg.user_id, msg.type)
             return
         if target_user_id and msg.user_id != target_user_id:
-            logging.info("Ignoring message from %s; waiting for %s", msg.user_id, target_user_id)
+            logging.info("Ignoring message from %s; waiting for %s",
+                         msg.user_id, target_user_id)
             return
         if trigger_text != "*" and msg_text != trigger_text:
-            logging.info("Ignoring text '%s'; waiting for '%s'", msg_text, trigger_text)
+            logging.info("Ignoring text '%s'; waiting for '%s'",
+                         msg_text, trigger_text)
             return
 
-        logging.info("Trigger accepted from %s; sending PPTX then PNG", msg.user_id)
+        logging.info(
+            "Trigger accepted from %s; sending PNG then PPTX", msg.user_id)
         await call_wechat_bot_async(
             "reply",
             bot.reply,
             msg,
-            f"开始测试 reply_media：先发送 {pptx_path.name}，再发送 {png_path.name}",
+            f"开始测试 reply_media：先发送 {png_path.name}，再发送 {pptx_path.name}",
             msg=msg,
             detail="reply_media_test_start",
         )
 
-        await _reply_with_file(bot, msg, "file", pptx_path)
         await _reply_with_file(bot, msg, "image", png_path)
+        await _reply_with_file(bot, msg, "file", pptx_path)
 
         await call_wechat_bot_async(
             "reply",
