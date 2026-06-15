@@ -457,15 +457,18 @@ class WeChatBot:
             aeskey=encode_aes_key_hex(aes_key),
         )
 
+        upload_full_url = (upload_info.get("upload_full_url") or "").strip()
         upload_param = upload_info.get("upload_param")
-        if not upload_param:
-            raise MediaError("getuploadurl did not return upload_param")
-
-        upload_url = (
-            f"{CDN_BASE_URL}/upload"
-            f"?encrypted_query_param={quote(upload_param)}"
-            f"&filekey={quote(filekey)}"
-        )
+        if upload_full_url:
+            upload_url = upload_full_url
+        elif upload_param:
+            upload_url = (
+                f"{CDN_BASE_URL}/upload"
+                f"?encrypted_query_param={quote(upload_param)}"
+                f"&filekey={quote(filekey)}"
+            )
+        else:
+            raise MediaError("No upload URL in getuploadurl response")
 
         timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
