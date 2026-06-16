@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import logging
 import os
+from pathlib import Path
 from urllib.parse import urlparse
+
+_CONF_FILE = Path(__file__).resolve().parent / "server.conf"
 
 import aiohttp
 from aiohttp import web
@@ -26,12 +30,51 @@ HOP_BY_HOP_HEADERS = {
 }
 
 
+def _load_conf() -> configparser.ConfigParser:
+    conf = configparser.ConfigParser()
+    if _CONF_FILE.exists():
+        try:
+            conf.read(_CONF_FILE, encoding="utf-8")
+        except (configparser.Error, OSError):
+            pass
+    return conf
+
+
 def _parse_allowed_suffixes() -> list[str]:
     raw = (os.getenv("PROXY_ALLOW_HOST_SUFFIXES") or "").strip()
     if not raw:
         return DEFAULT_ALLOWED_SUFFIXES
     items = [item.strip().lower() for item in raw.split(",") if item.strip()]
     return items or DEFAULT_ALLOWED_SUFFIXES
+
+
+def _parse_allowed_ips(conf: configparser.ConfigParser) -> list[str]:
+    """Return whitelisted client IPs from server.conf [proxy] section.
+
+    Falls back to PROXY_ALLOWED_IPS env var when the config key is absent/empty.
+    An empty result means all IPs are allowed.
+    """
+    raw = conf.get("proxy", "allowed_ips", fallback="").strip()
+    if not raw:
+        raw = (os.getenv("PROXY_ALLOWED_IPS") or "").strip()
+    if not raw:
+        return []
+    return [ip.strip() for ip in raw.split(",") if ip.strip()]
+
+
+@web.middleware
+async def ip_whitelist_middleware(
+    request: web.Request, handler
+) -> web.StreamResponse:
+    allowed_ips: list[str] = request.app["allowed_ips"]
+    if allowed_ips:
+        client_ip = request.remote or ""
+        if client_ip not in allowed_ips:
+            logging.warning(
+                "blocked request from %s — not in IP whitelist", client_ip
+            )
+            return web.json_response({"error": "forbidden"}, status=403)
+    return await handler(request)
 
 
 def _is_allowed_host(host: str, allowed_suffixes: list[str]) -> bool:
@@ -118,12 +161,17 @@ async def handle_proxy(request: web.Request) -> web.Response:
 
 
 def create_app() -> web.Application:
+    conf = _load_conf()
     max_body_mb = int(os.getenv("PROXY_MAX_BODY_MB", "200"))
     timeout_seconds = float(os.getenv("PROXY_TIMEOUT_SECONDS", "600"))
 
-    app = web.Application(client_max_size=max_body_mb * 1024 * 1024)
+    app = web.Application(
+        client_max_size=max_body_mb * 1024 * 1024,
+        middlewares=[ip_whitelist_middleware],
+    )
     app["allowed_suffixes"] = _parse_allowed_suffixes()
     app["timeout"] = aiohttp.ClientTimeout(total=timeout_seconds)
+    app["allowed_ips"] = _parse_allowed_ips(conf)
     app.router.add_get("/healthz", handle_health)
     app.router.add_route("*", "/proxy", handle_proxy)
     return app
@@ -144,9 +192,13 @@ def main() -> None:
         level=getattr(logging, args.log_level),
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    allowed_ips = _parse_allowed_ips(_load_conf())
     logging.info("starting proxy on %s:%s", args.host, args.port)
-    logging.info("allowed host suffixes: %s",
-                 ", ".join(_parse_allowed_suffixes()))
+    logging.info("allowed host suffixes: %s", ", ".join(_parse_allowed_suffixes()))
+    if allowed_ips:
+        logging.info("IP whitelist: %s", ", ".join(allowed_ips))
+    else:
+        logging.info("IP whitelist: disabled (all IPs allowed)")
     web.run_app(create_app(), host=args.host, port=args.port)
 
 
