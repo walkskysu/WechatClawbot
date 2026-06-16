@@ -24,6 +24,7 @@ from .crypto import (
 )
 from .errors import ApiError, MediaError, NoContextError
 from .protocol import CDN_BASE_URL, DEFAULT_BASE_URL, ILinkApi
+from .proxy import wrap_url
 from .types import (
     CDNMedia,
     Credentials,
@@ -404,23 +405,27 @@ class WeChatBot:
         result = await self._cdn_upload(creds, data, user_id, media_type)
         items: list[dict[str, Any]] = []
         if caption:
-            items.append({"type": int(MessageItemType.TEXT), "text_item": {"text": caption}})
+            items.append({"type": int(MessageItemType.TEXT),
+                         "text_item": {"text": caption}})
         items.append(build_item(result))
         msg = self._api.build_media_message(user_id, context_token, items)
         await self._api.send_message(creds.base_url, creds.token, msg)
-        self._log(f"Sent media type={media_type} to {user_id} ({len(data)} bytes)")
+        self._log(
+            f"Sent media type={media_type} to {user_id} ({len(data)} bytes)")
 
     # ── Internal: CDN download ─────────────────────────────────────
 
     async def _cdn_download(
         self, media: CDNMedia, aeskey_override: str | None = None,
     ) -> bytes:
-        url = f"{CDN_BASE_URL}/download?encrypted_query_param={quote(media.encrypt_query_param)}"
+        target_url = f"{CDN_BASE_URL}/download?encrypted_query_param={quote(media.encrypt_query_param)}"
+        url = wrap_url(target_url)
         timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url) as resp:
                 if resp.status >= 400:
-                    raise MediaError(f"CDN download failed: HTTP {resp.status}")
+                    raise MediaError(
+                        f"CDN download failed: HTTP {resp.status}")
                 ciphertext = await resp.read()
 
         key_source = aeskey_override or media.aes_key
@@ -457,6 +462,7 @@ class WeChatBot:
             aeskey=encode_aes_key_hex(aes_key),
         )
 
+        self._log(f"upload_info: {upload_info}")
         upload_full_url = (upload_info.get("upload_full_url") or "").strip()
         upload_param = upload_info.get("upload_param")
         if upload_full_url:
@@ -470,20 +476,28 @@ class WeChatBot:
         else:
             raise MediaError("No upload URL in getuploadurl response")
 
-        timeout = aiohttp.ClientTimeout(total=60)
+        self._log(f"upload_url: {upload_url}")
+        proxied_upload_url = wrap_url(upload_url)
+        timeout = aiohttp.ClientTimeout(total=480)
+        _upload_start = asyncio.get_event_loop().time()
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
-                upload_url,
+                proxied_upload_url,
                 data=ciphertext,
                 headers={"Content-Type": "application/octet-stream"},
             ) as resp:
+                _upload_elapsed = asyncio.get_event_loop().time() - _upload_start
+                self._log(
+                    f"CDN upload response: status={resp.status} elapsed={_upload_elapsed:.2f}s size={len(ciphertext)}")
                 if resp.status >= 400:
-                    err_msg = resp.headers.get("x-error-message", f"HTTP {resp.status}")
+                    err_msg = resp.headers.get(
+                        "x-error-message", f"HTTP {resp.status}")
                     raise MediaError(f"CDN upload failed: {err_msg}")
 
                 encrypt_query_param = resp.headers.get("x-encrypted-param")
                 if not encrypt_query_param:
-                    raise MediaError("CDN upload succeeded but x-encrypted-param header missing")
+                    raise MediaError(
+                        "CDN upload succeeded but x-encrypted-param header missing")
 
         return UploadResult(
             media=CDNMedia(
@@ -507,7 +521,8 @@ class WeChatBot:
 
     def _remember_context(self, raw: dict[str, Any]) -> None:
         mt = raw.get("message_type")
-        uid = raw.get("from_user_id") if mt == MessageType.USER else raw.get("to_user_id")
+        uid = raw.get("from_user_id") if mt == MessageType.USER else raw.get(
+            "to_user_id")
         ct = raw.get("context_token")
         if uid and ct:
             self._context_tokens[uid] = ct
@@ -526,7 +541,8 @@ class WeChatBot:
                 ii = item["image_item"]
                 media = _parse_cdn_media(ii.get("media"))
                 images.append(ImageContent(
-                    media=media, thumb_media=_parse_cdn_media(ii.get("thumb_media")),
+                    media=media, thumb_media=_parse_cdn_media(
+                        ii.get("thumb_media")),
                     aes_key=ii.get("aeskey"), url=ii.get("url"),
                     width=ii.get("thumb_width"), height=ii.get("thumb_height"),
                 ))
@@ -558,7 +574,8 @@ class WeChatBot:
                 ))
             if item.get("ref_msg"):
                 ref = item["ref_msg"]
-                qt = ref.get("message_item", {}).get("text_item", {}).get("text")
+                qt = ref.get("message_item", {}).get(
+                    "text_item", {}).get("text")
                 quoted = QuotedMessage(title=ref.get("title"), text=qt)
 
         return IncomingMessage(

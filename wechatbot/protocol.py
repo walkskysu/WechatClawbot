@@ -14,6 +14,7 @@ from uuid import uuid4
 import aiohttp
 
 from .errors import ApiError
+from .proxy import wrap_url
 from .types import MediaType, MessageItemType, MessageState, MessageType
 
 DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
@@ -76,7 +77,8 @@ async def _parse_response(resp: aiohttp.ClientResponse, label: str) -> dict[str,
     payload: dict[str, Any] = json.loads(text) if text else {}
 
     if resp.status >= 400:
-        msg = payload.get("errmsg") or f"{label} failed with HTTP {resp.status}"
+        msg = payload.get(
+            "errmsg") or f"{label} failed with HTTP {resp.status}"
         raise ApiError(
             msg,
             http_status=resp.status,
@@ -87,9 +89,12 @@ async def _parse_response(resp: aiohttp.ClientResponse, label: str) -> dict[str,
     ret = payload.get("ret")
     errcode = payload.get("errcode")
     if (isinstance(ret, int) and ret != 0) or (isinstance(errcode, int) and errcode != 0):
-        code = errcode if isinstance(errcode, int) and errcode != 0 else (ret or 0)
-        msg = payload.get("errmsg") or f"{label} failed (ret={ret} errcode={errcode})"
-        raise ApiError(msg, http_status=resp.status, errcode=code, payload=payload)
+        code = errcode if isinstance(
+            errcode, int) and errcode != 0 else (ret or 0)
+        msg = payload.get(
+            "errmsg") or f"{label} failed (ret={ret} errcode={errcode})"
+        raise ApiError(msg, http_status=resp.status,
+                       errcode=code, payload=payload)
 
     return payload
 
@@ -101,13 +106,15 @@ class ILinkApi:
         self._timeout = aiohttp.ClientTimeout(total=45)
 
     async def get_qr_code(self, base_url: str) -> dict[str, Any]:
-        url = f"{base_url}/ilink/bot/get_bot_qrcode?bot_type=3"
+        target_url = f"{base_url}/ilink/bot/get_bot_qrcode?bot_type=3"
+        url = wrap_url(target_url)
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=_common_headers()) as resp:
                 return await _parse_response(resp, "get_bot_qrcode")
 
     async def poll_qr_status(self, base_url: str, qrcode: str) -> dict[str, Any]:
-        url = f"{base_url}/ilink/bot/get_qrcode_status?qrcode={quote(qrcode, safe='')}"
+        target_url = f"{base_url}/ilink/bot/get_qrcode_status?qrcode={quote(qrcode, safe='')}"
+        url = wrap_url(target_url)
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 url, headers=_common_headers()
@@ -176,7 +183,8 @@ class ILinkApi:
         body: dict[str, Any],
         timeout_secs: int = 15,
     ) -> dict[str, Any]:
-        url = f"{base_url.rstrip('/')}{endpoint}"
+        target_url = f"{base_url.rstrip('/')}{endpoint}"
+        url = wrap_url(target_url)
         timeout = aiohttp.ClientTimeout(total=timeout_secs)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
@@ -226,26 +234,31 @@ class ILinkApi:
 
         for attempt in range(1, max_retries + 1):
             try:
+                proxy_cdn_url = wrap_url(cdn_url)
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
-                        cdn_url,
+                        proxy_cdn_url,
                         data=ciphertext,
                         headers={"Content-Type": "application/octet-stream"},
                     ) as resp:
                         if 400 <= resp.status < 500:
-                            err_msg = resp.headers.get("x-error-message", f"HTTP {resp.status}")
+                            err_msg = resp.headers.get(
+                                "x-error-message", f"HTTP {resp.status}")
                             raise ApiError(
                                 f"CDN upload client error {resp.status}: {err_msg}",
                                 http_status=resp.status,
                                 errcode=0,
                             )
                         if resp.status != 200:
-                            err_msg = resp.headers.get("x-error-message", f"HTTP {resp.status}")
-                            raise Exception(f"CDN upload server error {resp.status}: {err_msg}")
+                            err_msg = resp.headers.get(
+                                "x-error-message", f"HTTP {resp.status}")
+                            raise Exception(
+                                f"CDN upload server error {resp.status}: {err_msg}")
 
                         param = resp.headers.get("x-encrypted-param")
                         if not param:
-                            raise Exception("CDN upload response missing x-encrypted-param header")
+                            raise Exception(
+                                "CDN upload response missing x-encrypted-param header")
                         return param
             except ApiError:
                 raise  # Client errors are definitive
@@ -254,7 +267,8 @@ class ILinkApi:
                 if attempt < max_retries:
                     continue
 
-        raise last_err or Exception(f"CDN upload failed after {max_retries} attempts")
+        raise last_err or Exception(
+            f"CDN upload failed after {max_retries} attempts")
 
     @staticmethod
     def build_cdn_upload_url(cdn_base_url: str, upload_param: str, filekey: str) -> str:

@@ -53,6 +53,58 @@ python main.py
 
 启动后终端会打印二维码，用微信扫码登录即可。登录后机器人开始自动回复私聊消息。
 
+## 机器A/机器B 代理部署（推荐）
+
+目标：让机器A运行 `main.py` 时，所有微信 API/CDN 请求都先到机器B，再由机器B转发出去。
+
+### 1. 在机器B启动代理
+
+在机器B的项目目录执行：
+
+```bash
+python proxy_server.py --host 0.0.0.0 --port 18080
+```
+
+可选环境变量（机器B）：
+
+- `PROXY_ALLOW_HOST_SUFFIXES`：允许转发的目标域名后缀，默认 `weixin.qq.com`
+- `PROXY_MAX_BODY_MB`：请求体大小上限（默认 200MB）
+- `PROXY_TIMEOUT_SECONDS`：上游请求超时（默认 600 秒）
+
+### 2. 在机器A配置走机器B代理
+
+机器A在 `server.conf` 里配置 `[proxy]`：
+
+```ini
+[proxy]
+enabled = true
+base_url = http://<机器B_IP>:18080
+```
+
+然后在机器A直接运行：
+
+python main.py
+
+````
+
+兼容说明：如果 `[proxy].enabled=false`，程序会回退到环境变量 `WECHAT_PROXY_BASE_URL`（若已设置）。
+
+生效后，以下链路都会经由机器B：
+
+- 登录/收消息/发消息等 iLink API 请求
+- 文件上传到微信 CDN
+- 媒体文件下载（图片、语音、视频、文件）
+
+### 3. 连通性检查
+
+机器A先验证机器B代理健康状态：
+
+```bash
+curl http://<机器B_IP>:18080/healthz
+````
+
+返回 `{"ok": true}` 即表示代理服务正常。
+
 ## 配置说明
 
 ### server.conf（可选）
