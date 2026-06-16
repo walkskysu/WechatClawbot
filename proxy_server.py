@@ -1,6 +1,8 @@
 """Run a simple HTTP relay on machine B for WeChat API/CDN traffic."""
 
 from __future__ import annotations
+from aiohttp import web
+import aiohttp
 
 import argparse
 import configparser
@@ -11,8 +13,6 @@ from urllib.parse import urlparse
 
 _CONF_FILE = Path(__file__).resolve().parent / "server.conf"
 
-import aiohttp
-from aiohttp import web
 
 DEFAULT_ALLOWED_SUFFIXES = [
     "weixin.qq.com",
@@ -194,7 +194,8 @@ def main() -> None:
     )
     allowed_ips = _parse_allowed_ips(_load_conf())
     logging.info("starting proxy on %s:%s", args.host, args.port)
-    logging.info("allowed host suffixes: %s", ", ".join(_parse_allowed_suffixes()))
+    logging.info("allowed host suffixes: %s",
+                 ", ".join(_parse_allowed_suffixes()))
     if allowed_ips:
         logging.info("IP whitelist: %s", ", ".join(allowed_ips))
     else:
